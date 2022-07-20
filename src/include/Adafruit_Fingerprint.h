@@ -98,11 +98,11 @@ typedef struct  {
   */
   /**************************************************************************/
 
-  uint16_t start_code; ///< "Wakeup" code for packet detection
-  uint8_t address[4];  ///< 32-bit Fingerprint sensor address
-  uint8_t type;        ///< Type of packet
-  uint16_t length;     ///< Length of packet
-  uint8_t data[64];    ///< The raw buffer for packet payload
+  uint16_t  start_code; ///< "Wakeup" code for packet detection
+  uint8_t   address[4];  ///< 32-bit Fingerprint sensor address
+  uint8_t   type;        ///< Type of packet
+  uint16_t  length;     ///< Length of packet
+  uint8_t   data[64];    ///< The raw buffer for packet payload
 } Adafruit_Fingerprint_Packet_t;
 
 typedef struct {
@@ -126,13 +126,16 @@ typedef struct {
   uint16_t packet_len;   ///< The max packet length (set by getParameters)
   uint16_t baud_rate; ///< The UART baud rate (set by getParameters)
 
-  void (*transmitBytes)(uint8_t *data, uint16_t length);
+  void    (*transmitBytes)(uint8_t *data, uint16_t length);
   uint8_t (*readByte)(void);
   uint8_t (*isAvailable)(void);
 
   // Buffers
-  uint8_t *txBuffer;
-  uint16_t txBufferSize;
+  uint8_t   *txBuffer;
+  uint16_t  txBufferSize;
+
+  void *mutex;
+  Adafruit_Fingerprint_Packet_t tmpPacket;
 } Adafruit_Fingerprint_t;
 
 void AFGR_Init(Adafruit_Fingerprint_t*,
@@ -154,9 +157,9 @@ uint8_t AFGR_FingerSearch(Adafruit_Fingerprint_t*, uint8_t slot);
 uint8_t AFGR_GetTemplateCount(Adafruit_Fingerprint_t*);
 uint8_t AFGR_SetPassword(Adafruit_Fingerprint_t*, uint32_t password);
 uint8_t AFGR_LEDcontrol(Adafruit_Fingerprint_t*, uint8_t on);
-//uint8_t AFGR_LEDcontrol(uint8_t control, uint8_t speed, uint8_t coloridx,
-//                   uint8_t count);
 
+uint8_t AFGR_MutexLock(Adafruit_Fingerprint_t*, uint16_t timeout);
+uint8_t AFGR_MutexUnlock(Adafruit_Fingerprint_t*);
 
 
 ///! Helper class to communicate with and keep state for fingerprint sensors
