@@ -33,12 +33,17 @@
 
 #define FINGERPRINT_DEBUG
 
+
+static const uint8_t default_address[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+
+
+static uint8_t mutexLock(uint32_t timeout);
+static uint8_t mutexUnlock(void);
 static void writeStructuredPacket(Adafruit_Fingerprint_t *fgrPrint,
                                   const Adafruit_Fingerprint_Packet_t *p);
 static uint8_t getStructuredPacket(Adafruit_Fingerprint_t *fgrPrint,
                                    Adafruit_Fingerprint_Packet_t *p,
                                    uint16_t timeout);
-static const uint8_t default_address[4] = {0xFF, 0xFF, 0xFF, 0xFF};
 
 /*!
  * @brief Gets the command packet
@@ -60,28 +65,41 @@ static const uint8_t default_address[4] = {0xFF, 0xFF, 0xFF, 0xFF};
  */
 #define SEND_CMD_PACKET(fgrPrint, ...)                                        \
   uint8_t status = FINGERPRINT_PACKETRECIEVEERR;                              \
-  if (AFGR_MutexLock(fgrPrint, 2000) != 0) {                                  \
+  if (fgrPrint->mutexLock(2000) != 0) {                                  \
     status = FINGERPRINT_TIMEOUT;                                             \
     goto end;                                                                 \
   }                                                                           \
   GET_CMD_PACKET(fgrPrint, __VA_ARGS__);                                      \
   status = packet->data[0];                                                   \
   end:                                                                        \
-  AFGR_MutexUnlock(fgrPrint);                                                 \
+  fgrPrint->mutexUnlock();                                                 \
   return status;
 
 /***************************************************************************
  PUBLIC FUNCTIONS
  ***************************************************************************/
 
-void AFGR_Init(Adafruit_Fingerprint_t *fgrPrint,
-               uint8_t *txBuffer, uint16_t txBufferSize)
+uint8_t AFGR_Init(Adafruit_Fingerprint_t *fgrPrint,
+                  uint8_t *txBuffer, uint16_t txBufferSize)
 {
+  if (fgrPrint->delay == 0
+      || fgrPrint->getTick == 0
+      || fgrPrint->transmitBytes == 0
+      || fgrPrint->readByte == 0
+      || fgrPrint->isAvailable == 0)
+  {
+    return FINGERPRINT_ERROR;
+  }
+
+  if (fgrPrint->mutexLock == 0) fgrPrint->mutexLock = mutexLock;
+  if (fgrPrint->mutexUnlock == 0) fgrPrint->mutexUnlock = mutexUnlock;
+
   fgrPrint->txBuffer = txBuffer;
   fgrPrint->txBufferSize = txBufferSize;
   fgrPrint->theAddress = 0xFFFFFFFFU;
 
   memcpy(&fgrPrint->tmpPacket.address[0], default_address, sizeof(fgrPrint->tmpPacket.address));
+  return FINGERPRINT_OK;
 }
 
 
@@ -114,7 +132,7 @@ uint8_t AFGR_GetParameters(Adafruit_Fingerprint_t *fgrPrint)
 {
   uint8_t status = FINGERPRINT_PACKETRECIEVEERR;
 
-  if (AFGR_MutexLock(fgrPrint, 2000) != 0) {
+  if (fgrPrint->mutexLock(2000) != FINGERPRINT_OK) {
     status = FINGERPRINT_TIMEOUT;
     goto end;
   }
@@ -144,7 +162,7 @@ uint8_t AFGR_GetParameters(Adafruit_Fingerprint_t *fgrPrint)
   status = packet->data[0];
 
   end:
-  AFGR_MutexUnlock(fgrPrint);
+  fgrPrint->mutexUnlock();
   return status;
 }
 
@@ -284,7 +302,7 @@ uint8_t AFGR_FingerFastSearch(Adafruit_Fingerprint_t *fgrPrint)
 {
   uint8_t status = FINGERPRINT_PACKETRECIEVEERR;
 
-  if (AFGR_MutexLock(fgrPrint, 2000) != 0) {
+  if (fgrPrint->mutexLock(2000) != FINGERPRINT_OK) {
     status = FINGERPRINT_TIMEOUT;
     goto end;
   }
@@ -305,7 +323,7 @@ uint8_t AFGR_FingerFastSearch(Adafruit_Fingerprint_t *fgrPrint)
   status = packet->data[0];
 
   end:
-  AFGR_MutexUnlock(fgrPrint);
+  fgrPrint->mutexUnlock();
   return status;
 }
 
@@ -325,7 +343,7 @@ uint8_t AFGR_FingerSearch(Adafruit_Fingerprint_t *fgrPrint, uint8_t slot)
 {
   uint8_t status = FINGERPRINT_PACKETRECIEVEERR;
 
-  if (AFGR_MutexLock(fgrPrint, 2000) != 0) {
+  if (fgrPrint->mutexLock(2000) != FINGERPRINT_OK) {
     status = FINGERPRINT_TIMEOUT;
     goto end;
   }
@@ -348,7 +366,7 @@ uint8_t AFGR_FingerSearch(Adafruit_Fingerprint_t *fgrPrint, uint8_t slot)
   status = packet->data[0];
 
   end:
-  AFGR_MutexUnlock(fgrPrint);
+  fgrPrint->mutexUnlock();
   return status;
 }
 
@@ -365,7 +383,7 @@ uint8_t AFGR_GetTemplateCount(Adafruit_Fingerprint_t *fgrPrint)
 {
   uint8_t status = FINGERPRINT_PACKETRECIEVEERR;
 
-  if (AFGR_MutexLock(fgrPrint, 2000) != 0) {
+  if (fgrPrint->mutexLock(2000) != FINGERPRINT_OK) {
     status = FINGERPRINT_TIMEOUT;
     goto end;
   }
@@ -379,7 +397,7 @@ uint8_t AFGR_GetTemplateCount(Adafruit_Fingerprint_t *fgrPrint)
   status = packet->data[0];
 
   end:
-  AFGR_MutexUnlock(fgrPrint);
+  fgrPrint->mutexUnlock();
   return status;
 }
 
@@ -414,7 +432,7 @@ uint8_t AFGR_LEDcontrol(Adafruit_Fingerprint_t *fgrPrint, uint8_t on)
   uint8_t                       status  = FINGERPRINT_PACKETRECIEVEERR;
   Adafruit_Fingerprint_Packet_t *packet = &(fgrPrint)->tmpPacket;
 
-  if (AFGR_MutexLock(fgrPrint, 2000) != 0) {
+  if (fgrPrint->mutexLock(2000) != FINGERPRINT_OK) {
     status = FINGERPRINT_TIMEOUT;
     goto end;
   }
@@ -437,22 +455,9 @@ uint8_t AFGR_LEDcontrol(Adafruit_Fingerprint_t *fgrPrint, uint8_t on)
   status = packet->data[0];
 
   end:
-  AFGR_MutexUnlock(fgrPrint);
+  fgrPrint->mutexUnlock();
   return status;
 }
-
-
-__attribute__((weak)) uint8_t AFGR_MutexLock(Adafruit_Fingerprint_t *fgrPrint, uint16_t timeout)
-{
-  return 0;
-}
-
-
-__attribute__((weak)) uint8_t AFGR_MutexUnlock(Adafruit_Fingerprint_t *fgrPrint)
-{
-  return 0;
-}
-
 
 /**************************************************************************/
 /*!
@@ -528,17 +533,17 @@ static uint8_t getStructuredPacket(Adafruit_Fingerprint_t *fgrPrint,
   uint8_t byte;
   uint16_t idx = 0;
   uint16_t start_code = 0;
-  uint32_t tick = AFGR_GetTick();
+  uint32_t tick = fgrPrint->getTick();
 
   if (fgrPrint->readByte == 0 || fgrPrint->isAvailable == 0 || tick == 0)
     return FINGERPRINT_TIMEOUT;
 
   while (1) {
     while (!fgrPrint->isAvailable()) {
-      if ((AFGR_GetTick() - tick) >= timeout) {
+      if ((fgrPrint->getTick() - tick) >= timeout) {
         return FINGERPRINT_TIMEOUT;
       }
-      AFGR_Delay(1);
+      fgrPrint->delay(1);
     }
     byte = fgrPrint->readByte();
     switch (idx) {
@@ -578,4 +583,14 @@ static uint8_t getStructuredPacket(Adafruit_Fingerprint_t *fgrPrint,
   }
   // Shouldn't get here so...
   return FINGERPRINT_BADPACKET;
+}
+
+static uint8_t mutexLock(uint32_t timeout)
+{
+  return FINGERPRINT_OK;
+}
+
+static uint8_t mutexUnlock(void)
+{
+  return FINGERPRINT_OK;
 }
