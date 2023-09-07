@@ -75,6 +75,8 @@
 #define FINGERPRINT_LED_BLUE           0x02 //!< Blue LED
 #define FINGERPRINT_LED_PURPLE         0x03 //!< Purple LED
 
+#define FINGERPRINT_PACKET_DATA_MAX_SZ 64 //!< Max packet data
+
 //#define FINGERPRINT_DEBUG
 
 #define DEFAULTTIMEOUT 1000 //!< UART reading timeout in milliseconds
@@ -92,11 +94,11 @@ typedef struct  {
   */
   /**************************************************************************/
 
-  uint16_t  start_code; ///< "Wakeup" code for packet detection
-  uint8_t   address[4];  ///< 32-bit Fingerprint sensor address
-  uint8_t   type;        ///< Type of packet
-  uint16_t  length;     ///< Length of packet
-  uint8_t   data[64];    ///< The raw buffer for packet payload
+  uint16_t  start_code;   ///< "Wakeup" code for packet detection
+  uint8_t   address[4];   ///< 32-bit Fingerprint sensor address
+  uint8_t   type;         ///< Type of packet
+  uint16_t  length;       ///< Length of packet
+  uint8_t   data[FINGERPRINT_PACKET_DATA_MAX_SZ];    ///< The raw buffer for packet payload
 } Adafruit_Fingerprint_Packet_t;
 
 typedef struct {

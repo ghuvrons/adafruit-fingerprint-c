@@ -573,6 +573,9 @@ static uint8_t getStructuredPacket(Adafruit_Fingerprint_t *fgrPrint,
       packet->length |= byte;
       break;
     default:
+      if (packet->length > FINGERPRINT_PACKET_DATA_MAX_SZ)
+        return FINGERPRINT_BADPACKET;
+
       packet->data[idx - 9] = byte;
       if ((idx - 8) == packet->length) {
         return FINGERPRINT_OK;
