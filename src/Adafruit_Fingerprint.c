@@ -34,59 +34,26 @@
 #define FINGERPRINT_DEBUG
 
 
-static const uint8_t default_address[4] = {0xFF, 0xFF, 0xFF, 0xFF};
-
-
 static uint8_t mutexLock(uint32_t timeout);
 static uint8_t mutexUnlock(void);
-static void writeStructuredPacket(Adafruit_Fingerprint_t *fgrPrint,
-                                  const Adafruit_Fingerprint_Packet_t *p);
-static uint8_t getStructuredPacket(Adafruit_Fingerprint_t *fgrPrint,
-                                   Adafruit_Fingerprint_Packet_t *p,
-                                   uint16_t timeout);
-
-/*!
- * @brief Gets the command packet
- */
-#define GET_CMD_PACKET(fgrPrint, ...)                                         \
-  Adafruit_Fingerprint_Packet_t *packet = &(fgrPrint)->tmpPacket;             \
-  uint8_t                       data[]  = {__VA_ARGS__};                      \
-  packet->type = FINGERPRINT_COMMANDPACKET;                                   \
-  packet->length = sizeof(data);                                              \
-  memcpy(&packet->data[0], data, packet->length);                             \
-  writeStructuredPacket(fgrPrint, packet);                                    \
-  if (getStructuredPacket(fgrPrint, packet, 5000) != FINGERPRINT_OK)          \
-    goto end;                                                                 \
-  if (packet->type != FINGERPRINT_ACKPACKET)                                  \
-    goto end;
-
-/*!
- * @brief Sends the command packet
- */
-#define SEND_CMD_PACKET(fgrPrint, ...)                                        \
-  uint8_t status = FINGERPRINT_PACKETRECIEVEERR;                              \
-  if (fgrPrint->mutexLock(2000) != 0) {                                  \
-    status = FINGERPRINT_TIMEOUT;                                             \
-    goto end;                                                                 \
-  }                                                                           \
-  GET_CMD_PACKET(fgrPrint, __VA_ARGS__);                                      \
-  status = packet->data[0];                                                   \
-  end:                                                                        \
-  fgrPrint->mutexUnlock();                                                 \
-  return status;
+static uint8_t sendCommand(Fingerprint_t*, uint8_t command, uint8_t *data, uint16_t length);
+static void sendPacket(Fingerprint_t*, const Fingerprint_Packet_t*);
+static uint8_t getResponse(Fingerprint_t*, Fingerprint_Packet_t*, uint32_t timeout);
+static uint16_t uint16ToBigEndian(uint16_t);
+static uint32_t uint32ToBigEndian(uint32_t);
 
 /***************************************************************************
  PUBLIC FUNCTIONS
  ***************************************************************************/
 
-uint8_t AFGR_Init(Adafruit_Fingerprint_t *fgrPrint,
-                  uint8_t *txBuffer, uint16_t txBufferSize)
+uint8_t AFGR_Init(Fingerprint_t *fgrPrint,
+                  uint8_t *txBuffer, uint16_t txBufferSize,
+                  uint8_t *rxBuffer, uint16_t rxBufferSize)
 {
   if (fgrPrint->delay == 0
       || fgrPrint->getTick == 0
-      || fgrPrint->transmitBytes == 0
-      || fgrPrint->readByte == 0
-      || fgrPrint->isAvailable == 0)
+      || fgrPrint->write == 0
+      || fgrPrint->read == 0)
   {
     return FINGERPRINT_ERROR;
   }
@@ -96,9 +63,9 @@ uint8_t AFGR_Init(Adafruit_Fingerprint_t *fgrPrint,
 
   fgrPrint->txBuffer = txBuffer;
   fgrPrint->txBufferSize = txBufferSize;
-  fgrPrint->theAddress = 0xFFFFFFFFU;
-
-  memcpy(&fgrPrint->tmpPacket.address[0], default_address, sizeof(fgrPrint->tmpPacket.address));
+  fgrPrint->rxBuffer = rxBuffer;
+  fgrPrint->rxBufferSize = rxBufferSize;
+  
   return FINGERPRINT_OK;
 }
 
@@ -110,13 +77,10 @@ uint8_t AFGR_Init(Adafruit_Fingerprint_t *fgrPrint,
     @returns True if password is correct
 */
 /**************************************************************************/
-uint8_t AFGR_VerifyPassword(Adafruit_Fingerprint_t *fgrPrint)
+uint8_t AFGR_VerifyPassword(Fingerprint_t *fgrPrint)
 {
-  SEND_CMD_PACKET(fgrPrint, FINGERPRINT_VERIFYPASSWORD,
-                  (uint8_t)(fgrPrint->thePassword >> 24),
-                  (uint8_t)(fgrPrint->thePassword >> 16),
-                  (uint8_t)(fgrPrint->thePassword >> 8),
-                  (uint8_t)(fgrPrint->thePassword & 0xFF));
+  uint32_t bigEndianPassword = uint32ToBigEndian(fgrPrint->thePassword);
+  return sendCommand(fgrPrint, FINGERPRINT_VERIFYPASSWORD, (uint8_t*) &bigEndianPassword, sizeof(uint32_t));
 }
 
 
@@ -128,16 +92,13 @@ uint8_t AFGR_VerifyPassword(Adafruit_Fingerprint_t *fgrPrint)
     @returns True if password is correct
 */
 /**************************************************************************/
-uint8_t AFGR_GetParameters(Adafruit_Fingerprint_t *fgrPrint)
+uint8_t AFGR_GetParameters(Fingerprint_t *fgrPrint)
 {
-  uint8_t status = FINGERPRINT_PACKETRECIEVEERR;
+  uint8_t status;
+  Fingerprint_Packet_t *packet = &(fgrPrint)->packet;
 
-  if (fgrPrint->mutexLock(2000) != FINGERPRINT_OK) {
-    status = FINGERPRINT_TIMEOUT;
-    goto end;
-  }
-
-  GET_CMD_PACKET(fgrPrint, FINGERPRINT_READSYSPARAM);
+  status = sendCommand(fgrPrint, FINGERPRINT_READSYSPARAM, 0, 0);
+  if (status != FINGERPRINT_OK) return status;
 
   fgrPrint->status_reg      = ((uint16_t)packet->data[1] << 8) | packet->data[2];
   fgrPrint->system_id       = ((uint16_t)packet->data[3] << 8) | packet->data[4];
@@ -160,9 +121,6 @@ uint8_t AFGR_GetParameters(Adafruit_Fingerprint_t *fgrPrint)
   fgrPrint->baud_rate = (((uint16_t)packet->data[15] << 8) | packet->data[16]) * 9600;
 
   status = packet->data[0];
-
-  end:
-  fgrPrint->mutexUnlock();
   return status;
 }
 
@@ -176,9 +134,9 @@ uint8_t AFGR_GetParameters(Adafruit_Fingerprint_t *fgrPrint)
     @returns <code>FINGERPRINT_IMAGEFAIL</code> on imaging error
 */
 /**************************************************************************/
-uint8_t AFGR_GetImage(Adafruit_Fingerprint_t *fgrPrint)
+uint8_t AFGR_GetImage(Fingerprint_t *fgrPrint)
 {
-  SEND_CMD_PACKET(fgrPrint, FINGERPRINT_GETIMAGE);
+  return sendCommand(fgrPrint, FINGERPRINT_GETIMAGE, 0, 0);
 }
 
 
@@ -195,9 +153,9 @@ uint8_t AFGR_GetImage(Adafruit_Fingerprint_t *fgrPrint)
     @returns <code>FINGERPRINT_INVALIDIMAGE</code> on failure to identify
    fingerprint features
 */
-uint8_t AFGR_Image2Tz(Adafruit_Fingerprint_t *fgrPrint, uint8_t slot)
+uint8_t AFGR_Image2Tz(Fingerprint_t *fgrPrint, uint8_t slot)
 {
-  SEND_CMD_PACKET(fgrPrint, FINGERPRINT_IMAGE2TZ, slot);
+  return sendCommand(fgrPrint, FINGERPRINT_IMAGE2TZ, slot, 1);
 }
 
 /**************************************************************************/
@@ -208,9 +166,9 @@ uint8_t AFGR_Image2Tz(Adafruit_Fingerprint_t *fgrPrint, uint8_t slot)
     @returns <code>FINGERPRINT_PACKETRECIEVEERR</code> on communication error
     @returns <code>FINGERPRINT_ENROLLMISMATCH</code> on mismatch of fingerprints
 */
-uint8_t AFGR_CreateModel(Adafruit_Fingerprint_t *fgrPrint)
+uint8_t AFGR_CreateModel(Fingerprint_t *fgrPrint)
 {
-  SEND_CMD_PACKET(fgrPrint, FINGERPRINT_REGMODEL);
+  return sendCommand(fgrPrint, FINGERPRINT_REGMODEL, 0, 0);
 }
 
 /**************************************************************************/
@@ -223,10 +181,15 @@ uint8_t AFGR_CreateModel(Adafruit_Fingerprint_t *fgrPrint)
    to flash memory
     @returns <code>FINGERPRINT_PACKETRECIEVEERR</code> on communication error
 */
-uint8_t AFGR_StoreModel(Adafruit_Fingerprint_t *fgrPrint, uint16_t id)
+uint8_t AFGR_StoreModel(Fingerprint_t *fgrPrint, uint16_t id)
 {
-  SEND_CMD_PACKET(fgrPrint, FINGERPRINT_STORE, 0x01, (uint8_t)(id >> 8),
-                  (uint8_t)(id & 0xFF));
+  uint8_t data[] = {
+    0x01,
+    (uint8_t)(id >> 8),
+    (uint8_t)(id & 0xFF)
+  };
+
+  return sendCommand(fgrPrint, FINGERPRINT_STORE, data, sizeof(data));
 }
 
 /**************************************************************************/
@@ -237,10 +200,15 @@ uint8_t AFGR_StoreModel(Adafruit_Fingerprint_t *fgrPrint, uint16_t id)
     @returns <code>FINGERPRINT_BADLOCATION</code> if the location is invalid
     @returns <code>FINGERPRINT_PACKETRECIEVEERR</code> on communication error
 */
-uint8_t AFGR_LoadModel(Adafruit_Fingerprint_t *fgrPrint, uint16_t id)
+uint8_t AFGR_LoadModel(Fingerprint_t *fgrPrint, uint16_t id)
 {
-  SEND_CMD_PACKET(fgrPrint, FINGERPRINT_LOAD, 0x01, (uint8_t)(id >> 8),
-                  (uint8_t)(id & 0xFF));
+  uint8_t data[] = {
+    0x01,
+    (uint8_t)(id >> 8),
+    (uint8_t)(id & 0xFF)
+  };
+
+  return sendCommand(fgrPrint, FINGERPRINT_LOAD, data, sizeof(data));
 }
 
 /**************************************************************************/
@@ -251,9 +219,10 @@ uint8_t AFGR_LoadModel(Adafruit_Fingerprint_t *fgrPrint, uint16_t id)
     @returns <code>FINGERPRINT_PACKETRECIEVEERR</code> on communication error
 */
 
-uint8_t AFGR_GetModel(Adafruit_Fingerprint_t *fgrPrint)
+uint8_t AFGR_GetModel(Fingerprint_t *fgrPrint)
 {
-  SEND_CMD_PACKET(fgrPrint, FINGERPRINT_UPLOAD, 0x01);
+  uint8_t data = 0x01;
+  return sendCommand(fgrPrint, FINGERPRINT_UPLOAD, &data, 1);
 }
 
 /**************************************************************************/
@@ -266,10 +235,16 @@ uint8_t AFGR_GetModel(Adafruit_Fingerprint_t *fgrPrint)
    to flash memory
     @returns <code>FINGERPRINT_PACKETRECIEVEERR</code> on communication error
 */
-uint8_t AFGR_DeleteModel(Adafruit_Fingerprint_t *fgrPrint, uint16_t id)
+uint8_t AFGR_DeleteModel(Fingerprint_t *fgrPrint, uint16_t id)
 {
-  SEND_CMD_PACKET(fgrPrint, FINGERPRINT_DELETE, (uint8_t)(id >> 8),
-                  (uint8_t)(id & 0xFF), 0x00, 0x01);
+  uint8_t data[] = {
+    (uint8_t)(id >> 8),
+    (uint8_t)(id & 0xFF), 
+    0x00, 
+    0x01
+  };
+  
+  return sendCommand(fgrPrint, FINGERPRINT_DELETE, data, sizeof(data));
 }
 
 
@@ -282,9 +257,9 @@ uint8_t AFGR_DeleteModel(Adafruit_Fingerprint_t *fgrPrint, uint16_t id)
    to flash memory
     @returns <code>FINGERPRINT_PACKETRECIEVEERR</code> on communication error
 */
-uint8_t AFGR_EmptyDatabase(Adafruit_Fingerprint_t *fgrPrint)
+uint8_t AFGR_EmptyDatabase(Fingerprint_t *fgrPrint)
 {
-  SEND_CMD_PACKET(fgrPrint, FINGERPRINT_EMPTY);
+  return sendCommand(fgrPrint, FINGERPRINT_EMPTY, 0, 0);
 }
 
 
@@ -298,17 +273,18 @@ uint8_t AFGR_EmptyDatabase(Adafruit_Fingerprint_t *fgrPrint)
     @returns <code>FINGERPRINT_PACKETRECIEVEERR</code> on communication error
 */
 /**************************************************************************/
-uint8_t AFGR_FingerFastSearch(Adafruit_Fingerprint_t *fgrPrint)
+uint8_t AFGR_FingerFastSearch(Fingerprint_t *fgrPrint)
 {
-  uint8_t status = FINGERPRINT_PACKETRECIEVEERR;
-
-  if (fgrPrint->mutexLock(2000) != FINGERPRINT_OK) {
-    status = FINGERPRINT_TIMEOUT;
-    goto end;
-  }
+  uint8_t status;
+  Fingerprint_Packet_t *packet = &(fgrPrint)->packet;
+  uint8_t data[] = {
+    0x01, 0x00, 0x00, 0x00, 0xA3
+  };
 
   // high speed search of slot #1 starting at page 0x0000 and page #0x00A3
-  GET_CMD_PACKET(fgrPrint, FINGERPRINT_HISPEEDSEARCH, 0x01, 0x00, 0x00, 0x00, 0xA3);
+  status = sendCommand(fgrPrint, FINGERPRINT_HISPEEDSEARCH, data, sizeof(data));
+  if (status != FINGERPRINT_OK) return status;
+
   fgrPrint->fingerID = 0xFFFF;
   fgrPrint->confidence = 0xFFFF;
 
@@ -320,10 +296,6 @@ uint8_t AFGR_FingerFastSearch(Adafruit_Fingerprint_t *fgrPrint)
   fgrPrint->confidence <<= 8;
   fgrPrint->confidence |= packet->data[4];
 
-  status = packet->data[0];
-
-  end:
-  fgrPrint->mutexUnlock();
   return status;
 }
 
@@ -339,18 +311,22 @@ uint8_t AFGR_FingerFastSearch(Adafruit_Fingerprint_t *fgrPrint)
     @returns <code>FINGERPRINT_PACKETRECIEVEERR</code> on communication error
 */
 /**************************************************************************/
-uint8_t AFGR_FingerSearch(Adafruit_Fingerprint_t *fgrPrint, uint8_t slot)
+uint8_t AFGR_FingerSearch(Fingerprint_t *fgrPrint, uint8_t slot)
 {
-  uint8_t status = FINGERPRINT_PACKETRECIEVEERR;
+  uint8_t status;
+  Fingerprint_Packet_t *packet = &(fgrPrint)->packet;
 
-  if (fgrPrint->mutexLock(2000) != FINGERPRINT_OK) {
-    status = FINGERPRINT_TIMEOUT;
-    goto end;
-  }
+  uint8_t data[] = {
+    slot, 
+    0x00, 
+    0x00, 
+    (uint8_t)(fgrPrint->capacity >> 8),
+    (uint8_t)(fgrPrint->capacity & 0xFF)
+  };
 
   // search of slot starting thru the capacity
-  GET_CMD_PACKET(fgrPrint, FINGERPRINT_SEARCH, slot, 0x00, 0x00, (uint8_t)(fgrPrint->capacity >> 8),
-                 (uint8_t)(fgrPrint->capacity & 0xFF));
+  status = sendCommand(fgrPrint, FINGERPRINT_SEARCH, data, sizeof(data));
+  if (status != FINGERPRINT_OK) return status;
 
   fgrPrint->fingerID = 0xFFFF;
   fgrPrint->confidence = 0xFFFF;
@@ -363,10 +339,6 @@ uint8_t AFGR_FingerSearch(Adafruit_Fingerprint_t *fgrPrint, uint8_t slot)
   fgrPrint->confidence <<= 8;
   fgrPrint->confidence |= packet->data[4];
 
-  status = packet->data[0];
-
-  end:
-  fgrPrint->mutexUnlock();
   return status;
 }
 
@@ -379,25 +351,18 @@ uint8_t AFGR_FingerSearch(Adafruit_Fingerprint_t *fgrPrint, uint8_t slot)
     @returns <code>FINGERPRINT_PACKETRECIEVEERR</code> on communication error
 */
 /**************************************************************************/
-uint8_t AFGR_GetTemplateCount(Adafruit_Fingerprint_t *fgrPrint)
+uint8_t AFGR_GetTemplateCount(Fingerprint_t *fgrPrint)
 {
-  uint8_t status = FINGERPRINT_PACKETRECIEVEERR;
+  uint8_t status;
+  Fingerprint_Packet_t *packet = &(fgrPrint)->packet;
 
-  if (fgrPrint->mutexLock(2000) != FINGERPRINT_OK) {
-    status = FINGERPRINT_TIMEOUT;
-    goto end;
-  }
-
-  GET_CMD_PACKET(fgrPrint, FINGERPRINT_TEMPLATECOUNT);
+  status = sendCommand(fgrPrint, FINGERPRINT_TEMPLATECOUNT, 0, 9);
+  if (status != FINGERPRINT_OK) return status;
 
   fgrPrint->templateCount = packet->data[1];
   fgrPrint->templateCount <<= 8;
   fgrPrint->templateCount |= packet->data[2];
 
-  status = packet->data[0];
-
-  end:
-  fgrPrint->mutexUnlock();
   return status;
 }
 
@@ -410,13 +375,11 @@ uint8_t AFGR_GetTemplateCount(Adafruit_Fingerprint_t *fgrPrint)
     @returns <code>FINGERPRINT_PACKETRECIEVEERR</code> on communication error
 */
 /**************************************************************************/
-uint8_t AFGR_SetPassword(Adafruit_Fingerprint_t *fgrPrint, uint32_t password)
+uint8_t AFGR_SetPassword(Fingerprint_t *fgrPrint, uint32_t password)
 {
-  SEND_CMD_PACKET(fgrPrint, FINGERPRINT_SETPASSWORD,
-                  (uint8_t)(password >> 24),
-                  (uint8_t)(password >> 16),
-                  (uint8_t)(password >> 8),
-                  (uint8_t)(password & 0xFF));
+  uint32_t bigEndianPassword = uint32ToBigEndian(password);
+
+  return sendCommand(fgrPrint, FINGERPRINT_SETPASSWORD, &bigEndianPassword, sizeof(uint32_t));
 }
 
 
@@ -427,125 +390,117 @@ uint8_t AFGR_SetPassword(Adafruit_Fingerprint_t *fgrPrint, uint32_t password)
     @returns <code>FINGERPRINT_OK</code> on success
 */
 /**************************************************************************/
-uint8_t AFGR_LEDcontrol(Adafruit_Fingerprint_t *fgrPrint, uint8_t on)
+uint8_t AFGR_LEDcontrol(Fingerprint_t *fgrPrint, uint8_t on)
 {
-  uint8_t                       status  = FINGERPRINT_PACKETRECIEVEERR;
-  Adafruit_Fingerprint_Packet_t *packet = &(fgrPrint)->tmpPacket;
+  if (on) {
+    return sendCommand(fgrPrint, FINGERPRINT_LEDON, 0, 0);
+  } else {
+    return sendCommand(fgrPrint, FINGERPRINT_LEDOFF, 0, 0);
+  }
+}
 
-  if (fgrPrint->mutexLock(2000) != FINGERPRINT_OK) {
+
+static uint8_t sendCommand(Fingerprint_t *fgrPrint, uint8_t command, uint8_t *data, uint16_t length)
+{
+  Fingerprint_Packet_t *packet = &(fgrPrint)->packet;
+  uint8_t status = FINGERPRINT_PACKETRECIEVEERR;
+
+  if (fgrPrint->mutexLock(2000) != 0) {
     status = FINGERPRINT_TIMEOUT;
     goto end;
   }
 
-  packet->type = FINGERPRINT_COMMANDPACKET;
-  packet->length = 1;
-
-  if (on) {
-    packet->data[0] = FINGERPRINT_LEDON;
-  } else {
-    packet->data[0] = FINGERPRINT_LEDOFF;
+  if (length > FINGERPRINT_PACKET_DATA_MAX_SZ) {
+    // return error
   }
 
-  writeStructuredPacket(fgrPrint, packet);
-  if (getStructuredPacket(fgrPrint, packet, 5000) != FINGERPRINT_OK)
+  packet->type = FINGERPRINT_COMMANDPACKET;
+  packet->command = command;
+  packet->datalength = length;
+  packet->data = data;
+  sendPacket(fgrPrint, packet);
+  if (getResponse(fgrPrint, packet, 5000) != FINGERPRINT_OK)
     goto end;
   if (packet->type != FINGERPRINT_ACKPACKET)
     goto end;
-
   status = packet->data[0];
-
-  end:
+end:
   fgrPrint->mutexUnlock();
   return status;
 }
 
-/**************************************************************************/
-/*!
-    @brief   Helper function to process a packet and send it over UART to the
-   sensor
-    @param   packet A structure containing the bytes to transmit
-*/
-/**************************************************************************/
-static void writeStructuredPacket(Adafruit_Fingerprint_t *fgrPrint,
-                                  const Adafruit_Fingerprint_Packet_t *packet)
+
+static void sendPacket(Fingerprint_t *fgrPrint, const Fingerprint_Packet_t *packet)
 {
-  uint16_t i = 0;
+  uint16_t i = 0, j;
+  uint16_t checksum = 0;
   uint8_t *buffer = fgrPrint->txBuffer;
 
-  if (fgrPrint->txBuffer == 0) return;
+  if (buffer == 0) return;
   if (fgrPrint->txBufferSize < 9) return;
+  if (fgrPrint->write == 0) return;
 
   *(buffer + (i++)) = (uint8_t)((AFGR_START_CODE >> 8) & 0xFF);
   *(buffer + (i++)) = (uint8_t)(AFGR_START_CODE & 0xFF);
-  *(buffer + (i++)) = packet->address[0];
-  *(buffer + (i++)) = packet->address[1];
-  *(buffer + (i++)) = packet->address[2];
-  *(buffer + (i++)) = packet->address[3];
+  *(buffer + (i++)) = (uint8_t)((fgrPrint->address >> 24) & 0xFF);
+  *(buffer + (i++)) = (uint8_t)((fgrPrint->address >> 16) & 0xFF);
+  *(buffer + (i++)) = (uint8_t)((fgrPrint->address >> 8) & 0xFF);
+  *(buffer + (i++)) = (uint8_t)((fgrPrint->address) & 0xFF);
   *(buffer + (i++)) = packet->type;
+  checksum = packet->type;
 
-  uint16_t wire_length = packet->length + 2;
-  *(buffer + (i++)) = (uint8_t)((wire_length >> 8)& 0xFF);
-  *(buffer + (i++)) = (uint8_t)(wire_length & 0xFF);
+  uint16_t wire_length = packet->datalength + 2; // 2 bytes checksum
+  if (packet->type == FINGERPRINT_COMMANDPACKET) wire_length++;
+  *(buffer + (i++)) = (uint8_t)((wire_length >> 8)&0xFF);
+  *(buffer + (i++)) = (uint8_t)(wire_length&0xFF);
 
-  uint16_t sum = ((wire_length) >> 8) + ((wire_length)&0xFF) + packet->type;
-  for (uint16_t j = 0; j < packet->length; j++) {
+  checksum += (((wire_length >> 8)&0xFF) + (wire_length&0xFF));
+
+  if (packet->type == FINGERPRINT_COMMANDPACKET)
+  {
+    *(buffer + (i++)) = packet->command;
+    checksum += packet->command;
+  }
+
+  for (j = 0; j < packet->datalength; j++) {
     if (i >= fgrPrint->txBufferSize) {
+      fgrPrint->write(buffer, i);
       i = 0;
-      if (fgrPrint->transmitBytes != 0) {
-        fgrPrint->transmitBytes(buffer, i);
-      }
     }
-    *(buffer + (i++)) = packet->data[j];
-    sum += packet->data[j];
+    *(buffer + (i++)) = *(packet->data + j);
+    checksum += *(packet->data + j);
   }
 
   if (i >= (fgrPrint->txBufferSize-2)) {
+    fgrPrint->write(buffer, i);
     i = 0;
-    if (fgrPrint->transmitBytes != 0) {
-      fgrPrint->transmitBytes(buffer, i);
-    }
-  }
-  *(buffer + (i++)) = (uint8_t)(sum >> 8);
-  *(buffer + (i++)) = (uint8_t)(sum & 0xFF);
-
-  if (fgrPrint->transmitBytes != 0) {
-    fgrPrint->transmitBytes(buffer, i);
   }
 
+  *(buffer + (i++)) = (uint8_t)(checksum >> 8);
+  *(buffer + (i++)) = (uint8_t)(checksum & 0xFF);
+  fgrPrint->write(buffer, i);
   return;
 }
 
-/**************************************************************************/
-/*!
-    @brief   Helper function to receive data over UART from the sensor and
-   process it into a packet
-    @param   packet A structure containing the bytes received
-    @param   timeout how many milliseconds we're willing to wait
-    @returns <code>FINGERPRINT_OK</code> on success
-    @returns <code>FINGERPRINT_TIMEOUT</code> or
-   <code>FINGERPRINT_BADPACKET</code> on failure
-*/
-/**************************************************************************/
-static uint8_t getStructuredPacket(Adafruit_Fingerprint_t *fgrPrint,
-                                   Adafruit_Fingerprint_Packet_t *packet,
-                                   uint16_t timeout)
+static uint8_t getResponse(Fingerprint_t *fgrPrint, Fingerprint_Packet_t *packet, uint32_t timeout)
 {
   uint8_t byte;
-  uint16_t idx = 0;
+  int16_t idx = 0;
   uint16_t start_code = 0;
-  uint32_t tick = fgrPrint->getTick();
+  int readResult;
+  uint8_t *buffer = fgrPrint->rxBuffer;
+  uint32_t address = 0;
+  uint16_t checksum;
+  uint16_t recvChecksum;
 
-  if (fgrPrint->readByte == 0 || fgrPrint->isAvailable == 0 || tick == 0)
-    return FINGERPRINT_TIMEOUT;
+  if (fgrPrint->read == 0) return FINGERPRINT_ERROR;
+  if (fgrPrint->getTick == 0) return FINGERPRINT_ERROR;
+  if (fgrPrint->rxBuffer == 0) return FINGERPRINT_ERROR;
 
   while (1) {
-    while (!fgrPrint->isAvailable()) {
-      if ((fgrPrint->getTick() - tick) >= timeout) {
-        return FINGERPRINT_TIMEOUT;
-      }
-      fgrPrint->delay(1);
-    }
-    byte = fgrPrint->readByte();
+    readResult = fgrPrint->read(&byte, 1, timeout);
+    if (readResult <= 0) return FINGERPRINT_TIMEOUT;
+
     switch (idx) {
     case 0:
       if (byte != (AFGR_START_CODE >> 8))
@@ -561,24 +516,43 @@ static uint8_t getStructuredPacket(Adafruit_Fingerprint_t *fgrPrint,
     case 3:
     case 4:
     case 5:
-      packet->address[idx - 2] = byte;
+      address |= (uint32_t)byte << (8*(5-idx));
       break;
     case 6:
       packet->type = byte;
+      checksum = byte;
       break;
     case 7:
-      packet->length = (uint16_t)byte << 8;
+      packet->datalength = (uint16_t)byte << 8;
+      checksum += byte;
       break;
     case 8:
-      packet->length |= byte;
+      packet->datalength |= byte;
+      if (packet->datalength > fgrPrint->rxBufferSize)
+        return FINGERPRINT_BADPACKET;
+      checksum += byte;
+
+      // get data;
+      break;
+
+    // checksum
+    case -2:
+      recvChecksum = (uint16_t)byte << 8;
+      break;
+    case -1:
+      recvChecksum |= (uint16_t)byte;
+      if (recvChecksum != checksum) {
+        return FINGERPRINT_BADPACKET;
+      }
+      return FINGERPRINT_OK;
       break;
     default:
-      if (packet->length > FINGERPRINT_PACKET_DATA_MAX_SZ)
-        return FINGERPRINT_BADPACKET;
-
-      packet->data[idx - 9] = byte;
-      if ((idx - 8) == packet->length) {
-        return FINGERPRINT_OK;
+      *buffer = byte;
+      buffer++;
+      checksum += byte;
+      if ((idx - 6) >= packet->datalength) {
+        packet->data = fgrPrint->rxBuffer;
+        idx = -3;
       }
       break;
     }
@@ -586,6 +560,32 @@ static uint8_t getStructuredPacket(Adafruit_Fingerprint_t *fgrPrint,
   }
   // Shouldn't get here so...
   return FINGERPRINT_BADPACKET;
+
+}
+
+
+static uint16_t uint16ToBigEndian(uint16_t num)
+{
+  uint16_t result;
+  uint8_t *bytesResult = &result;
+
+  *bytesResult      = (uint8_t)((num >> 8) & 0xFF);
+  *(bytesResult+1)  = (uint8_t)(num & 0xFF);
+
+  return result;
+}
+
+static uint32_t uint32ToBigEndian(uint32_t num)
+{
+  uint32_t result;
+  uint8_t *bytesResult = &result;
+
+  *bytesResult      = (uint8_t)((num >> 24) & 0xFF);
+  *(bytesResult+1)  = (uint8_t)((num >> 16) & 0xFF);
+  *(bytesResult+2)  = (uint8_t)((num >> 8) & 0xFF);
+  *(bytesResult+3)  = (uint8_t)(num & 0xFF);
+
+  return result;
 }
 
 static uint8_t mutexLock(uint32_t timeout)

@@ -2,6 +2,8 @@
 #define ADAFRUIT_FINGERPRINT_CLIB_H
 
 #include "Adafruit_Fingerprint/conf.h"
+#include <stdint.h>
+
 /*!
  * @file Adafruit_Fingerprint.h
  */
@@ -94,17 +96,17 @@ typedef struct  {
   */
   /**************************************************************************/
 
-  uint16_t  start_code;   ///< "Wakeup" code for packet detection
-  uint8_t   address[4];   ///< 32-bit Fingerprint sensor address
-  uint8_t   type;         ///< Type of packet
-  uint16_t  length;       ///< Length of packet
-  uint8_t   data[FINGERPRINT_PACKET_DATA_MAX_SZ];    ///< The raw buffer for packet payload
-} Adafruit_Fingerprint_Packet_t;
+  uint16_t                start_code;   ///< "Wakeup" code for packet detection
+  uint8_t                 type;         ///< Type of packet
+  uint8_t                 command;
+  uint16_t                datalength;   ///< Length of packet
+  uint8_t                 *data;        ///< The raw buffer for packet payload
+} Fingerprint_Packet_t;
 
 typedef struct {
 
   uint32_t thePassword;
-  uint32_t theAddress;
+  uint32_t address;
 
   /// The matching location that is set by fingerFastSearch()
   uint16_t fingerID;
@@ -126,36 +128,45 @@ typedef struct {
   uint32_t  (*getTick)(void);
   uint8_t   (*mutexLock)(uint32_t timeout);
   uint8_t   (*mutexUnlock)(void);
-  uint8_t   (*isAvailable)(void);
-  void      (*transmitBytes)(uint8_t *data, uint16_t length);
-  uint8_t   (*readByte)(void);
+  int       (*write)(uint8_t *data, uint16_t length);
+
+  /**
+   * @brief 
+   * @result read length, -1 if error timeout, 0 if EOF
+   */
+  int       (*read)(uint8_t *buf, uint16_t length, uint32_t timeout);
 
   // Buffers
   uint8_t   *txBuffer;
   uint16_t  txBufferSize;
+  uint8_t   *rxBuffer;
+  uint16_t  rxBufferSize;
 
-  Adafruit_Fingerprint_Packet_t tmpPacket;
-} Adafruit_Fingerprint_t;
+  Fingerprint_Packet_t packet;
+} Fingerprint_t;
 
-uint8_t AFGR_Init(Adafruit_Fingerprint_t*,
-                  uint8_t *txBuffer, uint16_t txBufferSize);
-uint8_t AFGR_VerifyPassword(Adafruit_Fingerprint_t*);
-uint8_t AFGR_GetParameters(Adafruit_Fingerprint_t*);
 
-uint8_t AFGR_GetImage(Adafruit_Fingerprint_t*);
-uint8_t AFGR_Image2Tz(Adafruit_Fingerprint_t*, uint8_t slot);
-uint8_t AFGR_CreateModel(Adafruit_Fingerprint_t*);
 
-uint8_t AFGR_StoreModel(Adafruit_Fingerprint_t*, uint16_t id);
-uint8_t AFGR_LoadModel(Adafruit_Fingerprint_t*, uint16_t id);
-uint8_t AFGR_GetModel(Adafruit_Fingerprint_t*);
-uint8_t AFGR_DeleteModel(Adafruit_Fingerprint_t*, uint16_t id);
-uint8_t AFGR_EmptyDatabase(Adafruit_Fingerprint_t*);
-uint8_t AFGR_FingerFastSearch(Adafruit_Fingerprint_t*);
-uint8_t AFGR_FingerSearch(Adafruit_Fingerprint_t*, uint8_t slot);
-uint8_t AFGR_GetTemplateCount(Adafruit_Fingerprint_t*);
-uint8_t AFGR_SetPassword(Adafruit_Fingerprint_t*, uint32_t password);
-uint8_t AFGR_LEDcontrol(Adafruit_Fingerprint_t*, uint8_t on);
+uint8_t AFGR_Init(Fingerprint_t*, 
+                  uint8_t *txBuffer, uint16_t txBufferSize, 
+                  uint8_t *rxBuffer, uint16_t rxBufferSize);
+uint8_t AFGR_VerifyPassword(Fingerprint_t*);
+uint8_t AFGR_GetParameters(Fingerprint_t*);
+
+uint8_t AFGR_GetImage(Fingerprint_t*);
+uint8_t AFGR_Image2Tz(Fingerprint_t*, uint8_t slot);
+uint8_t AFGR_CreateModel(Fingerprint_t*);
+
+uint8_t AFGR_StoreModel(Fingerprint_t*, uint16_t id);
+uint8_t AFGR_LoadModel(Fingerprint_t*, uint16_t id);
+uint8_t AFGR_GetModel(Fingerprint_t*);
+uint8_t AFGR_DeleteModel(Fingerprint_t*, uint16_t id);
+uint8_t AFGR_EmptyDatabase(Fingerprint_t*);
+uint8_t AFGR_FingerFastSearch(Fingerprint_t*);
+uint8_t AFGR_FingerSearch(Fingerprint_t*, uint8_t slot);
+uint8_t AFGR_GetTemplateCount(Fingerprint_t*);
+uint8_t AFGR_SetPassword(Fingerprint_t*, uint32_t password);
+uint8_t AFGR_LEDcontrol(Fingerprint_t*, uint8_t on);
 
 
 
