@@ -91,7 +91,6 @@ uint8_t AFGR_Init(Fingerprint_t *fgrPrint,
 Fingerprint_Error_t AFGR_SetPassword(Fingerprint_t *fgrPrint, uint32_t password)
 {
   uint32_t bigEndianPassword = uint32ToBigEndian(password);
-
   return sendCommand(fgrPrint, FINGERPRINT_SETPASSWORD, (uint8_t*) &bigEndianPassword, sizeof(uint32_t), 0, 0);
 }
 
@@ -101,7 +100,6 @@ Fingerprint_Error_t AFGR_SetPassword(Fingerprint_t *fgrPrint, uint32_t password)
 */
 Fingerprint_Error_t AFGR_VerifyPassword(Fingerprint_t *fgrPrint)
 {
-  Fingerprint_Error_t status;
   uint32_t bigEndianPassword = uint32ToBigEndian(fgrPrint->password);
   return sendCommand(fgrPrint, FINGERPRINT_VERIFYPASSWORD, 
                      (uint8_t*) &bigEndianPassword, sizeof(uint32_t),
@@ -120,30 +118,38 @@ Fingerprint_Error_t AFGR_VerifyPassword(Fingerprint_t *fgrPrint)
 Fingerprint_Error_t AFGR_GetParameters(Fingerprint_t *fgrPrint)
 {
   Fingerprint_Error_t status;
-  Fingerprint_Packet_t *packet = &(fgrPrint)->packet;
 
-  status = sendCommand(fgrPrint, FINGERPRINT_READSYSPARAM, 0, 0, 0, 0);
+  struct __attribute__((packed)){
+    uint16_t status_reg;
+    uint16_t system_id;
+    uint16_t capacity;
+    uint16_t security_level;
+    uint32_t device_addr;
+    uint16_t packet_len;
+    uint16_t baud_rate;
+  } data;
+
+
+  status = sendCommand(fgrPrint, FINGERPRINT_READSYSPARAM, 0, 0, (uint8_t*) &data, sizeof(data));
   if (status != FINGERPRINT_OK) return status;
 
-  // fgrPrint->status_reg      = ((uint16_t)packet->data[1] << 8) | packet->data[2];
-  // fgrPrint->system_id       = ((uint16_t)packet->data[3] << 8) | packet->data[4];
-  // fgrPrint->capacity        = ((uint16_t)packet->data[5] << 8) | packet->data[6];
-  // fgrPrint->security_level  = ((uint16_t)packet->data[7] << 8) | packet->data[8];
-  // fgrPrint->device_addr     = ((uint32_t)packet->data[9] << 24)  |
-  //                             ((uint32_t)packet->data[10] << 16) |
-  //                             ((uint32_t)packet->data[11] << 8)  |
-  //                               (uint32_t)packet->data[12];
-  // fgrPrint->packet_len = ((uint16_t)packet->data[13] << 8) | packet->data[14];
-  // if (fgrPrint->packet_len == 0) {
-  //   fgrPrint->packet_len = 32;
-  // } else if (fgrPrint->packet_len == 1) {
-  //   fgrPrint->packet_len = 64;
-  // } else if (fgrPrint->packet_len == 2) {
-  //   fgrPrint->packet_len = 128;
-  // } else if (fgrPrint->packet_len == 3) {
-  //   fgrPrint->packet_len = 256;
-  // }
-  // fgrPrint->baud_rate = (((uint16_t)packet->data[15] << 8) | packet->data[16]) * 9600;
+   fgrPrint->status_reg      = bigEndianToUint16(data.status_reg);
+   fgrPrint->system_id       = bigEndianToUint16(data.system_id);
+   fgrPrint->capacity        = bigEndianToUint16(data.capacity);
+   fgrPrint->security_level  = bigEndianToUint16(data.security_level);
+   fgrPrint->device_addr     = bigEndianToUint32(data.device_addr);
+   fgrPrint->packet_len      = bigEndianToUint16(data.packet_len);
+   fgrPrint->baud_rate       = bigEndianToUint16(data.baud_rate) * 9600;
+
+   if (fgrPrint->packet_len == 0) {
+     fgrPrint->packet_len = 32;
+   } else if (fgrPrint->packet_len == 1) {
+     fgrPrint->packet_len = 64;
+   } else if (fgrPrint->packet_len == 2) {
+     fgrPrint->packet_len = 128;
+   } else if (fgrPrint->packet_len == 3) {
+     fgrPrint->packet_len = 256;
+   }
 
   return status;
 }
@@ -202,9 +208,7 @@ Fingerprint_Error_t AFGR_CreateModelFromBuffer(Fingerprint_t *fgrPrint, uint8_t 
   uint8_t charBuffer = (uint8_t) FINGERPRINT_CHAR_BUFFER_1;
 
   status = sendCommandWithData(fgrPrint, FINGERPRINT_DOWNLOAD, &charBuffer, 1, data, size);
-  if (status != FINGERPRINT_OK) {
-    return status;
-  }
+  if (status != FINGERPRINT_OK) return status;
 
   return status;
 }
@@ -312,7 +316,6 @@ Fingerprint_Error_t AFGR_EmptyDatabase(Fingerprint_t *fgrPrint)
 Fingerprint_Error_t AFGR_FingerFastSearch(Fingerprint_t *fgrPrint, Fingerprint_CharBuffer_t charBuffer)
 {
   Fingerprint_Error_t status;
-  Fingerprint_Packet_t *packet = &(fgrPrint)->packet;
   uint8_t data[] = {
     (uint8_t)charBuffer, 0x00, 0x00, 0x00, 0xA3
   };
@@ -512,7 +515,6 @@ static int16_t sendCommandWithResponseData(Fingerprint_t *fgrPrint, uint8_t comm
 {
   Fingerprint_Packet_t *packet = &(fgrPrint)->packet;
   Fingerprint_Error_t status = FINGERPRINT_PACKETRECIEVEERR;
-  uint16_t respLength = 0;
   uint16_t respDataLength = 0;
 
   if (fgrPrint->mutexLock(2000) != 0) {
@@ -738,7 +740,7 @@ static Fingerprint_Error_t getResponse(Fingerprint_t *fgrPrint,
   if (readResult <= 0) return FINGERPRINT_TIMEOUT;
 
   packet->checksum = bigEndianToUint16(packet->checksum);
-  // if (checksum != packet->checksum) return FINGERPRINT_BADPACKET;
+  if (checksum != packet->checksum) return FINGERPRINT_BADPACKET;
 
   return err;
 }
