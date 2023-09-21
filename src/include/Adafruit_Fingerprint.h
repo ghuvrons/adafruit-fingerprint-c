@@ -88,8 +88,8 @@ typedef enum {
 } Fingerprint_Error_t;
 
 typedef enum {
-  FINGERPRINT_CHAR_BUFFER_1,
-  FINGERPRINT_CHAR_BUFFER_2,
+  FINGERPRINT_CHAR_BUFFER_1 = 1,
+  FINGERPRINT_CHAR_BUFFER_2 = 2,
 } Fingerprint_CharBuffer_t;
 
 typedef struct __attribute__((packed)) {

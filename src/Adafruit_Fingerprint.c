@@ -459,11 +459,13 @@ static Fingerprint_Error_t sendCommandWithData(Fingerprint_t *fgrPrint, uint8_t 
   Fingerprint_Packet_t *packet = &(fgrPrint)->packet;
   Fingerprint_Error_t status = FINGERPRINT_PACKETRECIEVEERR;
 
+  if (fgrPrint->packet_len == 0)   return FINGERPRINT_ERROR;
+  if (fgrPrint->serial.flush == 0) return FINGERPRINT_ERROR;
+
   if (fgrPrint->mutexLock(2000) != 0) {
     return FINGERPRINT_TIMEOUT;
   }
 
-  if (fgrPrint->serial.flush == 0) return FINGERPRINT_ERROR;
   fgrPrint->serial.flush();
 
   packet->header.type = FINGERPRINT_COMMANDPACKET;
@@ -483,24 +485,23 @@ static Fingerprint_Error_t sendCommandWithData(Fingerprint_t *fgrPrint, uint8_t 
     status = FINGERPRINT_OK;
   }
   
-  while(dataLength > 0) {
+  while (dataLength > 0) {
     packet->header.type = FINGERPRINT_DATAPACKET;
     packet->datalength = dataLength;
     packet->data = data;
 
-    if (packet->datalength >= 128) {
-      packet->datalength = 128;
+    if (packet->datalength > fgrPrint->packet_len) {
+      packet->datalength = fgrPrint->packet_len;
     }
-
-    dataLength -= packet->datalength;
-    data += packet->datalength;
-
-    if (dataLength == 0) {
+    else {
       packet->header.type = FINGERPRINT_ENDDATAPACKET;
     }
 
     status = sendPacket(fgrPrint, packet);
     if (status != FINGERPRINT_OK) goto end;
+
+    dataLength -= packet->datalength;
+    data += packet->datalength;
   }
 
 end:
