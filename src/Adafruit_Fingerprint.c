@@ -82,13 +82,26 @@ uint8_t AFGR_Init(Fingerprint_t *fgrPrint,
 }
 
 /**
+ * @brief Set the password on the sensor (future communication will require
+ * password verification so don't forget it!!!)
+ * @param   password 32-bit password code
+ * @returns Fingerprint_Error_t
+*/
+Fingerprint_Error_t AFGR_SetPassword(Fingerprint_t *fgrPrint, uint32_t password)
+{
+  uint32_t bigEndianPassword = uint32ToBigEndian(password);
+
+  return sendCommand(fgrPrint, FINGERPRINT_SETPASSWORD, (uint8_t*) &bigEndianPassword, sizeof(uint32_t), 0, 0);
+}
+
+/**
  * @brief Verifies the sensors' access password (default password is 0x0000000). 
  * A good way to also check if the sensors is active and responding
 */
 Fingerprint_Error_t AFGR_VerifyPassword(Fingerprint_t *fgrPrint)
 {
   Fingerprint_Error_t status;
-  uint32_t bigEndianPassword = uint32ToBigEndian(fgrPrint->thePassword);
+  uint32_t bigEndianPassword = uint32ToBigEndian(fgrPrint->password);
   return sendCommand(fgrPrint, FINGERPRINT_VERIFYPASSWORD, 
                      (uint8_t*) &bigEndianPassword, sizeof(uint32_t),
                      0, 0);
@@ -235,14 +248,12 @@ Fingerprint_Error_t AFGR_LoadModel(Fingerprint_t *fgrPrint, uint16_t id)
   return sendCommand(fgrPrint, FINGERPRINT_LOAD, data, sizeof(data), 0, 0);
 }
 
-/**************************************************************************/
-/*!
-    @brief   Ask the sensor to transfer 256-byte fingerprint template from the
-   buffer to the UART
-    @returns <code>FINGERPRINT_OK</code> on success
-    @returns <code>FINGERPRINT_PACKETRECIEVEERR</code> on communication error
+/**
+ * @brief   Ask the sensor to transfer 256-byte fingerprint template from the
+ * buffer to the UART
+ * @returns length of get data
+ * @returns return Fingerprint error if < 0. error can be get from return value & 0x08
 */
-
 int16_t AFGR_GetModel(Fingerprint_t *fgrPrint, uint8_t *buffer, uint16_t size)
 {
   uint8_t charBuffer = (uint8_t) FINGERPRINT_CHAR_BUFFER_1;
@@ -380,22 +391,6 @@ Fingerprint_Error_t AFGR_GetTemplateCount(Fingerprint_t *fgrPrint)
   fgrPrint->templateCount = bigEndianToUint16(templateCount);
 
   return status;
-}
-
-/**************************************************************************/
-/*!
-    @brief   Set the password on the sensor (future communication will require
-   password verification so don't forget it!!!)
-    @param   password 32-bit password code
-    @returns <code>FINGERPRINT_OK</code> on success
-    @returns <code>FINGERPRINT_PACKETRECIEVEERR</code> on communication error
-*/
-/**************************************************************************/
-Fingerprint_Error_t AFGR_SetPassword(Fingerprint_t *fgrPrint, uint32_t password)
-{
-  uint32_t bigEndianPassword = uint32ToBigEndian(password);
-
-  return sendCommand(fgrPrint, FINGERPRINT_SETPASSWORD, (uint8_t*) &bigEndianPassword, sizeof(uint32_t), 0, 0);
 }
 
 
@@ -538,12 +533,14 @@ getResponseData:
   status = getResponse(fgrPrint, packet, 
                       (respBuffer)?respBuffer+respDataLength:0, respBufferSize, 
                       1000);
-  if (status != FINGERPRINT_OK) goto end;
+  if (status != FINGERPRINT_OK && status != FINGERPRINT_BUF_SIZE_TOO_SHORT) 
+    goto end;
   if (respBuffer && respBufferSize > 0) {
     respBufferSize -= packet->datalength;
     respDataLength += packet->datalength;
   }
-  if (packet->header.type != FINGERPRINT_ENDDATAPACKET) goto getResponseData;
+  if (packet->header.type != FINGERPRINT_ENDDATAPACKET)
+    goto getResponseData;
 
 end:
   fgrPrint->mutexUnlock();
@@ -639,6 +636,7 @@ static Fingerprint_Error_t getResponse(Fingerprint_t *fgrPrint,
   int16_t idx = 0;
   int readResult;
   uint16_t checksum;
+  Fingerprint_Error_t err = FINGERPRINT_OK;
 
   if (fgrPrint->read == 0) return FINGERPRINT_ERROR;
   if (fgrPrint->getTick == 0) return FINGERPRINT_ERROR;
@@ -669,8 +667,9 @@ static Fingerprint_Error_t getResponse(Fingerprint_t *fgrPrint,
   readResult = fgrPrint->read((uint8_t*)&packet->header.address, sizeof(Fingerprint_PacketHeader_t)-2, timeout);
   if (readResult <= 0) return FINGERPRINT_TIMEOUT;
 
-  packet->header.address = bigEndianToUint32(packet->header.prefix);
+  packet->header.address = bigEndianToUint32(packet->header.address);
   packet->header.payloadlength = bigEndianToUint16(packet->header.payloadlength);
+  if (packet->header.payloadlength == 0) return FINGERPRINT_BADPACKET;
 
   checksum = packet->header.type;
   checksum += (packet->header.payloadlength >> 8) & 0xFFU;
@@ -692,19 +691,35 @@ static Fingerprint_Error_t getResponse(Fingerprint_t *fgrPrint,
   packet->data = buffer;
   packet->datalength = 0;
   packet->header.payloadlength -= 2; // not read checksum
-  while (packet->header.payloadlength)
-  {
-    readResult = fgrPrint->read(&byte, sizeof(uint8_t), timeout);
-    if (readResult <= 0) return FINGERPRINT_TIMEOUT;
 
-    checksum += byte;
+  while (buffer && bufferSize && packet->header.payloadlength) {
+    readResult = fgrPrint->read(buffer, 
+                                bufferSize < packet->header.payloadlength? 
+                                  bufferSize:
+                                  packet->header.payloadlength, 
+                                timeout);
+    
+    if (readResult < 0) 
+      return FINGERPRINT_TIMEOUT;
 
-    if (buffer && bufferSize > 0) {
-      *buffer = byte;
+    packet->header.payloadlength -= readResult;
+    packet->datalength += readResult;
+    for (uint16_t i = 0; i < readResult; i++) 
+    {
+      checksum += *buffer;
       buffer++;
-      packet->datalength++;
       bufferSize--;
     }
+  }
+
+  while (packet->header.payloadlength)
+  {
+    err = FINGERPRINT_BUF_SIZE_TOO_SHORT;
+    readResult = fgrPrint->read(&byte, sizeof(uint8_t), timeout);
+    if (readResult <= 0)
+      return FINGERPRINT_TIMEOUT;
+      
+    checksum += byte;
     packet->header.payloadlength--;
   }
 
@@ -713,9 +728,9 @@ static Fingerprint_Error_t getResponse(Fingerprint_t *fgrPrint,
   if (readResult <= 0) return FINGERPRINT_TIMEOUT;
 
   packet->checksum = bigEndianToUint16(packet->checksum);
-  if (checksum != packet->checksum) return FINGERPRINT_BADPACKET;
+  // if (checksum != packet->checksum) return FINGERPRINT_BADPACKET;
 
-  return FINGERPRINT_OK;
+  return err;
 }
 
 

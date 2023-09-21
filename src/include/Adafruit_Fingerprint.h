@@ -57,6 +57,7 @@ typedef enum {
   FINGERPRINT_ERROR              = -1, //!< Command execution is error
   FINGERPRINT_TIMEOUT            = -2, //!< Timeout was reached
   FINGERPRINT_BADPACKET          = -3, //!< Bad packet was sent
+  FINGERPRINT_BUF_SIZE_TOO_SHORT = -4, //!< Bad packet was sent
 
   FINGERPRINT_PACKETRECIEVEERR   = 0x01, //!< Error when receiving data package
   FINGERPRINT_NOFINGER           = 0x02, //!< No finger on the sensor
@@ -122,7 +123,7 @@ typedef struct  {
 
 typedef struct {
 
-  uint32_t thePassword;
+  uint32_t password;
   uint32_t address;
 
   /// The matching location that is set by fingerFastSearch()
