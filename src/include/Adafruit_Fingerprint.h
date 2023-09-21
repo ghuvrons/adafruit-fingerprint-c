@@ -146,13 +146,17 @@ typedef struct {
   uint32_t  (*getTick)(void);
   uint8_t   (*mutexLock)(uint32_t timeout);
   uint8_t   (*mutexUnlock)(void);
-  int       (*write)(uint8_t *data, uint16_t length);
 
-  /**
-   * @brief 
-   * @result read length, -1 if error timeout, 0 if EOF
-   */
-  int       (*read)(uint8_t *buf, uint16_t length, uint32_t timeout);
+  struct
+  {
+    /**
+     * @brief 
+     * @result read length, -1 if error timeout, 0 if EOF
+     */
+    int (*read)(uint8_t *buf, uint16_t length, uint32_t timeout);
+    int (*write)(uint8_t *data, uint16_t length);
+    int (*flush)(void);
+  } serial;
 
   // Buffers
   uint8_t   *txBuffer;

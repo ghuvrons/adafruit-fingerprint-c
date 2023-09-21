@@ -64,8 +64,9 @@ uint8_t AFGR_Init(Fingerprint_t *fgrPrint,
 {
   if (fgrPrint->delay == 0
       || fgrPrint->getTick == 0
-      || fgrPrint->write == 0
-      || fgrPrint->read == 0)
+      || fgrPrint->serial.read == 0
+      || fgrPrint->serial.write == 0
+      || fgrPrint->serial.flush == 0)
   {
     return FINGERPRINT_ERROR;
   }
@@ -422,6 +423,9 @@ static Fingerprint_Error_t sendCommand(Fingerprint_t *fgrPrint, uint8_t command,
     return FINGERPRINT_TIMEOUT;
   }
 
+  if (fgrPrint->serial.flush == 0) return FINGERPRINT_ERROR;
+  fgrPrint->serial.flush();
+
   packet->header.type = FINGERPRINT_COMMANDPACKET;
   packet->command = command;
   packet->datalength = paramsLength;
@@ -455,6 +459,9 @@ static Fingerprint_Error_t sendCommandWithData(Fingerprint_t *fgrPrint, uint8_t 
   if (fgrPrint->mutexLock(2000) != 0) {
     return FINGERPRINT_TIMEOUT;
   }
+
+  if (fgrPrint->serial.flush == 0) return FINGERPRINT_ERROR;
+  fgrPrint->serial.flush();
 
   packet->header.type = FINGERPRINT_COMMANDPACKET;
   packet->command = command;
@@ -512,6 +519,9 @@ static int16_t sendCommandWithResponseData(Fingerprint_t *fgrPrint, uint8_t comm
     return FINGERPRINT_TIMEOUT;
   }
 
+  if (fgrPrint->serial.flush == 0) return FINGERPRINT_ERROR;
+  fgrPrint->serial.flush();
+
   packet->header.type = FINGERPRINT_COMMANDPACKET;
   packet->command = command;
   packet->datalength = paramsLength;
@@ -564,7 +574,7 @@ static Fingerprint_Error_t sendPacket(Fingerprint_t *fgrPrint, Fingerprint_Packe
 
   if (buffer == 0) return FINGERPRINT_ERROR;
   if (fgrPrint->txBufferSize < 9) return FINGERPRINT_ERROR;
-  if (fgrPrint->write == 0) return FINGERPRINT_ERROR;
+  if (fgrPrint->serial.write == 0) return FINGERPRINT_ERROR;
 
   packet->header.prefix = uint16ToBigEndian(AFGR_START_CODE);
   packet->header.address = uint32ToBigEndian(fgrPrint->address);
@@ -598,7 +608,7 @@ static Fingerprint_Error_t sendPacket(Fingerprint_t *fgrPrint, Fingerprint_Packe
   // write data parameter
   for (uint16_t j = 0; j < packet->datalength; j++) {
     if (bufferSize == 0) {
-      fgrPrint->write(fgrPrint->txBuffer, bufferLength);
+      fgrPrint->serial.write(fgrPrint->txBuffer, bufferLength);
       buffer = fgrPrint->txBuffer;
       bufferSize = fgrPrint->txBufferSize;
       bufferLength = 0;
@@ -612,7 +622,7 @@ static Fingerprint_Error_t sendPacket(Fingerprint_t *fgrPrint, Fingerprint_Packe
   }
 
   if (bufferSize < 2) {
-    fgrPrint->write(fgrPrint->txBuffer, bufferLength);
+    fgrPrint->serial.write(fgrPrint->txBuffer, bufferLength);
     buffer = fgrPrint->txBuffer;
     bufferSize = fgrPrint->txBufferSize;
     bufferLength = 0;
@@ -623,7 +633,7 @@ static Fingerprint_Error_t sendPacket(Fingerprint_t *fgrPrint, Fingerprint_Packe
   bufferSize += sizeof(uint16_t);
   bufferLength += sizeof(uint16_t);
 
-  fgrPrint->write(fgrPrint->txBuffer, bufferLength);
+  fgrPrint->serial.write(fgrPrint->txBuffer, bufferLength);
   return FINGERPRINT_OK;
 }
 
@@ -638,13 +648,13 @@ static Fingerprint_Error_t getResponse(Fingerprint_t *fgrPrint,
   uint16_t checksum;
   Fingerprint_Error_t err = FINGERPRINT_OK;
 
-  if (fgrPrint->read == 0) return FINGERPRINT_ERROR;
+  if (fgrPrint->serial.read == 0) return FINGERPRINT_ERROR;
   if (fgrPrint->getTick == 0) return FINGERPRINT_ERROR;
   if (fgrPrint->rxBuffer == 0) return FINGERPRINT_ERROR;
   
   // read prefix
   while (idx < 2) {
-    readResult = fgrPrint->read(&byte, 1, timeout);
+    readResult = fgrPrint->serial.read(&byte, 1, timeout);
     if (readResult <= 0) return FINGERPRINT_TIMEOUT;
 
     switch (idx) {
@@ -664,7 +674,7 @@ static Fingerprint_Error_t getResponse(Fingerprint_t *fgrPrint,
   }
 
   // read header 
-  readResult = fgrPrint->read((uint8_t*)&packet->header.address, sizeof(Fingerprint_PacketHeader_t)-2, timeout);
+  readResult = fgrPrint->serial.read((uint8_t*)&packet->header.address, sizeof(Fingerprint_PacketHeader_t)-2, timeout);
   if (readResult <= 0) return FINGERPRINT_TIMEOUT;
 
   packet->header.address = bigEndianToUint32(packet->header.address);
@@ -679,7 +689,7 @@ static Fingerprint_Error_t getResponse(Fingerprint_t *fgrPrint,
   if (packet->header.type == FINGERPRINT_ACKPACKET
       && packet->header.payloadlength > 1)
   {
-    readResult = fgrPrint->read(&packet->response, sizeof(uint8_t), timeout);
+    readResult = fgrPrint->serial.read(&packet->response, sizeof(uint8_t), timeout);
     if (readResult <= 0) return FINGERPRINT_TIMEOUT;
     checksum += packet->response;
     packet->header.payloadlength--;
@@ -693,7 +703,7 @@ static Fingerprint_Error_t getResponse(Fingerprint_t *fgrPrint,
   packet->header.payloadlength -= 2; // not read checksum
 
   while (buffer && bufferSize && packet->header.payloadlength) {
-    readResult = fgrPrint->read(buffer, 
+    readResult = fgrPrint->serial.read(buffer, 
                                 bufferSize < packet->header.payloadlength? 
                                   bufferSize:
                                   packet->header.payloadlength, 
@@ -715,7 +725,7 @@ static Fingerprint_Error_t getResponse(Fingerprint_t *fgrPrint,
   while (packet->header.payloadlength)
   {
     err = FINGERPRINT_BUF_SIZE_TOO_SHORT;
-    readResult = fgrPrint->read(&byte, sizeof(uint8_t), timeout);
+    readResult = fgrPrint->serial.read(&byte, sizeof(uint8_t), timeout);
     if (readResult <= 0)
       return FINGERPRINT_TIMEOUT;
       
@@ -724,7 +734,7 @@ static Fingerprint_Error_t getResponse(Fingerprint_t *fgrPrint,
   }
 
   // checksum
-  readResult = fgrPrint->read((uint8_t*)&packet->checksum, sizeof(uint16_t), timeout);
+  readResult = fgrPrint->serial.read((uint8_t*)&packet->checksum, sizeof(uint16_t), timeout);
   if (readResult <= 0) return FINGERPRINT_TIMEOUT;
 
   packet->checksum = bigEndianToUint16(packet->checksum);
