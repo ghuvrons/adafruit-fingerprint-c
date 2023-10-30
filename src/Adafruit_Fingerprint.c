@@ -83,6 +83,17 @@ uint8_t AFGR_Init(Fingerprint_t *fgrPrint,
 }
 
 /**
+ * @brief Set the address on the sensor
+ * @param   password 32-bit address code
+ * @returns Fingerprint_Error_t
+*/
+Fingerprint_Error_t AFGR_SetAddress(Fingerprint_t *fgrPrint, uint32_t address)
+{
+  uint32_t bigEndianPassword = uint32ToBigEndian(address);
+  return sendCommand(fgrPrint, FINGERPRINT_SETADDRESS, (uint8_t*) &bigEndianPassword, sizeof(uint32_t), 0, 0);
+}
+
+/**
  * @brief Set the password on the sensor (future communication will require
  * password verification so don't forget it!!!)
  * @param   password 32-bit password code

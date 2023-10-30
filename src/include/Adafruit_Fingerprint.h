@@ -30,6 +30,7 @@
 #define FINGERPRINT_READSYSPARAM       0x0F //!< Read system parameters
 #define FINGERPRINT_SETPASSWORD        0x12 //!< Sets passwords
 #define FINGERPRINT_VERIFYPASSWORD     0x13 //!< Verifies the password
+#define FINGERPRINT_SETADDRESS         0x15 //!< Sets address
 #define FINGERPRINT_HISPEEDSEARCH      0x1B //!< Asks the sensor to search
                                             //!  for a matching fingerprint template to the
                                             //!  last model generated
@@ -175,6 +176,9 @@ uint8_t AFGR_Init(Fingerprint_t*,
 Fingerprint_Error_t AFGR_VerifyPassword(Fingerprint_t*);
 Fingerprint_Error_t AFGR_GetParameters(Fingerprint_t*);
 
+Fingerprint_Error_t AFGR_SetAddress(Fingerprint_t*, uint32_t address);
+Fingerprint_Error_t AFGR_SetPassword(Fingerprint_t*, uint32_t password);
+
 Fingerprint_Error_t AFGR_GetImage(Fingerprint_t*);
 Fingerprint_Error_t AFGR_Image2Tz(Fingerprint_t*, Fingerprint_CharBuffer_t);
 Fingerprint_Error_t AFGR_CreateModel(Fingerprint_t*);
@@ -187,7 +191,6 @@ Fingerprint_Error_t AFGR_EmptyDatabase(Fingerprint_t*);
 Fingerprint_Error_t AFGR_FingerFastSearch(Fingerprint_t*, Fingerprint_CharBuffer_t);
 Fingerprint_Error_t AFGR_FingerSearch(Fingerprint_t*, Fingerprint_CharBuffer_t);
 Fingerprint_Error_t AFGR_GetTemplateCount(Fingerprint_t*);
-Fingerprint_Error_t AFGR_SetPassword(Fingerprint_t*, uint32_t password);
 Fingerprint_Error_t AFGR_LEDcontrol(Fingerprint_t*, uint8_t on);
 
 
